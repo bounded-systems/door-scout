@@ -1,0 +1,63 @@
+{
+  "nodes": {
+    "door-kit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781623552,
+        "narHash": "sha256-zFHSjSmXDs7UGdIN9oC3g2q8N9tSNUJr5zscY9jMAl0=",
+        "owner": "bounded-systems",
+        "repo": "door-kit",
+        "rev": "a3ae40e5075e3dbded3db9a0d345f842984a646b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bounded-systems",
+        "repo": "door-kit",
+        "rev": "a3ae40e5075e3dbded3db9a0d345f842984a646b",
+        "type": "github"
+      }
+    },
+    "guest-room": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781557771,
+        "narHash": "sha256-2iXN95ClKEQGM+KPN9sEcMQ8zn/gZAMfAkGS5ri8Zao=",
+        "owner": "bounded-systems",
+        "repo": "guest-room",
+        "rev": "5bc85b634a0a8d698243ba3b708f0420516308ec",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bounded-systems",
+        "repo": "guest-room",
+        "rev": "5bc85b634a0a8d698243ba3b708f0420516308ec",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1781359544,
+        "narHash": "sha256-iUuzKQcyXvopYDDzFpMK5eQKP3WIJExYny2kJtbgUcE=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "9f11f828c213641c2369a9f1fa31fe31557e3156",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "9f11f828c213641c2369a9f1fa31fe31557e3156",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "door-kit": "door-kit",
+        "guest-room": "guest-room",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

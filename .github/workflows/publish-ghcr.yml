@@ -1,0 +1,74 @@
+name: publish-ghcr
+
+# Build the pinned scoutd OCI image with nix and push it to GHCR. Run manually
+# (workflow_dispatch); defaults to the `dev` tag. The image is the door's product.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image tag to publish"
+        default: "dev"
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # ghcr.io/<owner>/door-scout/scoutd
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/door-scout
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, system: x86_64-linux, runner: ubuntu-latest }
+          - { arch: arm64, system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
+        with:
+          extra-conf: |
+            extra-experimental-features = nix-command flakes
+
+      - name: Use a v2 containers registries.conf
+        run: |
+          : > "${RUNNER_TEMP}/registries.conf"
+          echo "CONTAINERS_REGISTRIES_CONF=${RUNNER_TEMP}/registries.conf" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | nix run nixpkgs#skopeo -- login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build + push scoutd (${{ matrix.arch }})
+        run: |
+          set -euo pipefail
+          nix build ".#packages.${{ matrix.system }}.scoutd-image"
+          archive="$(readlink -f result)"
+          nix run nixpkgs#skopeo -- copy --insecure-policy \
+            "docker-archive:${archive}" \
+            "docker://${REGISTRY}/scoutd:${VERSION}-${{ matrix.arch }}"
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Create + push manifest list
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/scoutd"
+          docker manifest rm "${ref}:${VERSION}" >/dev/null 2>&1 || true
+          docker manifest create "${ref}:${VERSION}" "${ref}:${VERSION}-amd64" "${ref}:${VERSION}-arm64"
+          docker manifest push "${ref}:${VERSION}"
