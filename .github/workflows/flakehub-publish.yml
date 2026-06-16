@@ -1,0 +1,31 @@
+name: flakehub-publish
+
+# Publish the flake to FlakeHub on every push to main so consumers can pin it by
+# semver (rolling versions) instead of a git SHA:
+#   url = "https://flakehub.com/f/bounded-systems/<this-repo>/*.tar.gz";
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # FlakeHub publish (OIDC - no secret)
+  contents: read
+
+concurrency:
+  group: flakehub-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
+        with:
+          extra-conf: |
+            extra-experimental-features = nix-command flakes
+      - uses: DeterminateSystems/flakehub-push@71f57208810a5d299fc6545350981de98fdbc860 # v6
+        with:
+          rolling: true
+          visibility: public
