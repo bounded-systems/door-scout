@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # FlakeHub Cache (OIDC - no secret)
 
 env:
   # ghcr.io/<owner>/door-scout/scoutd
@@ -36,6 +37,10 @@ jobs:
         with:
           extra-conf: |
             extra-experimental-features = nix-command flakes
+
+      # Shared nix binary cache: cache hits skip the image rebuild; only changed
+      # derivations build (then get pushed). OIDC auth - no secret.
+      - uses: DeterminateSystems/flakehub-cache-action@4d48cd3cda2f381a3006ff800e1c1ca0c9809159 # v3.21.1
 
       - name: Use a v2 containers registries.conf
         run: |
