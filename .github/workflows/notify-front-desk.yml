@@ -8,4 +8,3 @@ jobs:
   sync:
     uses: bounded-systems/gh-project-room/.github/workflows/trigger-sync.yml@main
     secrets: inherit
-
