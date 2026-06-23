@@ -5,6 +5,6 @@
   },
   "description": {
     "type": "meta",
-    "value": "door-scout is scoutd packaged as a standalone, pinned OCI image. scoutd holds external read"
+    "value": "door-scout is scoutd packaged as a standalone, pinned OCI image.  scoutd holds external read tokens and hands a box content — never the credentials.  It egresses only through a mounted scout-netd door (socat bridges loopback → that socket; --network=none otherwise — interposit…"
   }
 }
