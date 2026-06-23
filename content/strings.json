@@ -1,0 +1,10 @@
+{
+  "name": {
+    "type": "name",
+    "value": "Door Scout"
+  },
+  "description": {
+    "type": "meta",
+    "value": "door-scout is scoutd packaged as a standalone, pinned OCI image. scoutd holds external read"
+  }
+}
