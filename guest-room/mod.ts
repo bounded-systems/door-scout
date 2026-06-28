@@ -1,24 +1,27 @@
-// guest-room — a guest-agnostic room+door capability runtime.
-//
-// This module knows nothing about any particular guest: no guest identity, no
-// image, no container runtime. A ROOM is walls plus a furnished set of DOORS; a
-// DOOR is a single (name, socket) capability brokered by a daemon that holds the
-// authority the room never does. A door may be ATTENUATED — narrowed by opaque
-// caveats the broker enforces — and attenuation is append-only, so a door can
-// only ever be handed onward equally or more restricted, never wider. The room
-// hands its guest a RULEBOOK keyed to exactly the doors present — a card per
-// granted door (how to use it, and any restriction on it) and a card per denied
-// door (there is no rule; do not attempt).
-//
-// A consumer supplies the door CATALOG and the room bundles; guest-room resolves
-// grants, derives the honest granted/denied surface, and renders the rulebook
-// lines. The consumer keeps its own launch mechanics (which runtime, which
-// image, how state mounts) — those are the guest, not the room.
-//
-// Extraction note: this directory is a self-contained internal dependency. When
-// it graduates to its own repo, it moves as-is and consumers flip the import
-// path; nothing here names a guest — a test enforces that the engine source is
-// guest-agnostic, so the seam can't silently re-couple.
+/**
+ * @module
+ * guest-room — a guest-agnostic room+door capability runtime.
+ *
+ * This module knows nothing about any particular guest: no guest identity, no
+ * image, no container runtime. A ROOM is walls plus a furnished set of DOORS; a
+ * DOOR is a single (name, socket) capability brokered by a daemon that holds the
+ * authority the room never does. A door may be ATTENUATED — narrowed by opaque
+ * caveats the broker enforces — and attenuation is append-only, so a door can
+ * only ever be handed onward equally or more restricted, never wider. The room
+ * hands its guest a RULEBOOK keyed to exactly the doors present — a card per
+ * granted door (how to use it, and any restriction on it) and a card per denied
+ * door (there is no rule; do not attempt).
+ *
+ * A consumer supplies the door CATALOG and the room bundles; guest-room resolves
+ * grants, derives the honest granted/denied surface, and renders the rulebook
+ * lines. The consumer keeps its own launch mechanics (which runtime, which
+ * image, how state mounts) — those are the guest, not the room.
+ *
+ * Extraction note: this directory is a self-contained internal dependency. When
+ * it graduates to its own repo, it moves as-is and consumers flip the import
+ * path; nothing here names a guest — a test enforces that the engine source is
+ * guest-agnostic, so the seam can't silently re-couple.
+ */
 
 /** A door name lands in a mount path (`/run/<name>.sock`) and an env var, so it
  *  must be path-safe — no `/`, no `..`, no injection into the mount spec. */
@@ -68,6 +71,7 @@ export function transportString(t: DoorTransport): string {
   }
 }
 
+/** Environment variables (a map of names to values or undefined). */
 export type Env = Record<string, string | undefined>;
 
 /** Default host socket for a daemon, private-dir-first. Pure (no I/O) so door
@@ -237,6 +241,118 @@ export function checkCaveats<Ctx>(
   return { ok: true };
 }
 
+// ── Signed grants (authority in transit) ─────────────────────────────────────
+// On a unix transport the held reference IS the authority (you can't reach a
+// socket you weren't handed). Across a vsock/tcp boundary you can't pass an fd,
+// so reachability stops being authority and the authority must travel IN the
+// grant: a signature the SERVING room verifies before honoring a call. See the
+// consuming product's ADR-CAPABILITY-TRANSPORT and CONCIERGE.md §7.
+//
+// The engine stays key-agnostic: signing/verification are INJECTED functions
+// (the issuer's signer lives outside the engine, in a dedicated signing door).
+// The engine owns
+// only the CANONICAL BYTES and the binding checks, so issuer and verifier agree
+// on exactly what a signature covers. A signed grant is a bearer token, so it is
+// bound to an `audience` (which room may present it), an `exp`, and a `nonce`.
+
+/** The binding a signature covers alongside the grant's authority: who may
+ *  present it, until when, a freshness nonce, and the issuer key id (the
+ *  verifier selects the matching public key). */
+export type GrantBinding = {
+  audience: string; // room id permitted to present this grant
+  exp: number; // expiry, epoch ms
+  nonce: string; // single-use freshness token
+  keyId: string; // issuer key identity
+};
+
+/** A DoorGrant plus the issuer binding + signature that make it authority in
+ *  transit. `host` (broker-side) is deliberately NOT signed — only the granted
+ *  reference and its constraints are. */
+export type SignedGrant = DoorGrant & { binding: GrantBinding; signature: string };
+
+export type GrantVerdict = { ok: true } | { ok: false; reason: string };
+
+/** The canonical bytes a grant signature covers: the AUTHORITY-bearing fields
+ *  (name, the guest reference being granted, sorted caveats) plus the full
+ *  binding. Cosmetic fields (grants/use/env) and the broker-side `host` are
+ *  excluded, so re-describing or re-homing a door cannot change what was signed.
+ *  Issuer and verifier MUST compute these identically — hence one shared fn. */
+export function grantSigningBytes(grant: DoorGrant, binding: GrantBinding): string {
+  return JSON.stringify({
+    name: grant.name,
+    guest: grant.guest,
+    caveats: [...(grant.caveats ?? [])].sort(),
+    binding,
+  });
+}
+
+/** Attach an issuer binding + signature to a grant. `sign` is injected — the
+ *  engine never holds a key. */
+export function signGrant(
+  grant: DoorGrant,
+  binding: GrantBinding,
+  sign: (data: string) => string,
+): SignedGrant {
+  return { ...grant, binding, signature: sign(grantSigningBytes(grant, binding)) };
+}
+
+/** Verify a signed grant at the SERVING room before honoring a call. Order:
+ *  signature (over the canonical bytes) → audience match → expiry. `verify` is
+ *  injected (the verifier holds the issuer pubkey for `grant.binding.keyId`).
+ *  Single-use of the nonce needs cross-call state, so it is the caller's job;
+ *  `verifyGrant` reports the binding it accepted so the caller can record it.
+ *  Pair with `checkCaveats` for full enforcement (signature THEN caveats). */
+export function verifyGrant(
+  grant: SignedGrant,
+  ctx: { audience: string; now: number },
+  verify: (data: string, signature: string) => boolean,
+): GrantVerdict {
+  if (!grant.signature || !grant.binding) return { ok: false, reason: "unsigned" };
+  if (!verify(grantSigningBytes(grant, grant.binding), grant.signature)) {
+    return { ok: false, reason: "bad-signature" };
+  }
+  if (grant.binding.audience !== ctx.audience) return { ok: false, reason: "audience-mismatch" };
+  if (ctx.now > grant.binding.exp) return { ok: false, reason: "expired" };
+  return { ok: true };
+}
+
+// ── Issuer keys (keyless, published-key verification) ────────────────────────
+// A signed grant names its issuer key by `kid` (binding.keyId). Rather than
+// pre-share a secret, a verifier holds the issuer's PUBLISHED public keys — a
+// set the issuer can rotate (publish a new key, retire an old one). The verifier
+// selects the key the grant names and validates against it: no shared secret,
+// identity-by-published-key. This is the keyless model the project's release
+// tooling already uses, adapted to a door system — the key set travels over a
+// door, not an HTTPS discovery endpoint. The engine models only the set +
+// selection; the crypto stays injected.
+
+/** One published issuer public key, selected by `kid`. */
+export type IssuerKey = { kid: string; publicKeyPem: string };
+
+/** An issuer's published key set. Multiple entries support rotation/overlap. */
+export type IssuerKeys = { keys: IssuerKey[] };
+
+/** Select the public key a grant names (`binding.keyId`); null if unknown. */
+export function resolveIssuerKey(keys: IssuerKeys, kid: string): IssuerKey | null {
+  return keys.keys.find((k) => k.kid === kid) ?? null;
+}
+
+/** Verify a signed grant against an issuer's PUBLISHED key set (no shared
+ *  secret): resolve `binding.keyId` in `keys`, then apply the same checks as
+ *  `verifyGrant`. `verifyWith` is injected — (data, signature, publicKeyPem) →
+ *  bool. An unknown `kid` fails closed (`unknown-key`). */
+export function verifyGrantWithKeys(
+  grant: SignedGrant,
+  ctx: { audience: string; now: number },
+  keys: IssuerKeys,
+  verifyWith: (data: string, signature: string, publicKeyPem: string) => boolean,
+): GrantVerdict {
+  if (!grant.signature || !grant.binding) return { ok: false, reason: "unsigned" };
+  const key = resolveIssuerKey(keys, grant.binding.keyId);
+  if (!key) return { ok: false, reason: "unknown-key" };
+  return verifyGrant(grant, ctx, (d, s) => verifyWith(d, s, key.publicKeyPem));
+}
+
 // ── Room attenuation ─────────────────────────────────────────────────────────
 // attenuate() narrows ONE door handed onward; this is the same rule lifted to
 // the SET of doors a parent hands to a sub-room. A child set attenuates from its
@@ -252,6 +368,7 @@ export type AttenuationViolation =
   | { door: string; reason: "absent-in-parent" }
   | { door: string; reason: "widened-caveats"; dropped: string[] };
 
+/** The verdict of `attenuatesDoors`: true if child is a valid attenuation of parent, false with violations. */
 export type AttenuationVerdict =
   | { ok: true }
   | { ok: false; violations: AttenuationViolation[] };
@@ -314,6 +431,41 @@ export function resolveProvider(
   const live = liveProviders(entries, capability, now);
   if (!live.length) return null;
   return attenuate(live[0]!.door, want);
+}
+
+// ── Confinement ──────────────────────────────────────────────────────────────
+// The property the whole design turns on: a capability never becomes durable
+// authority owned by its holder. Authority is valid only while a live provider
+// backs it, and only within that provider's ceiling — so it dies with the
+// workcell (the lease lapses) and can never be captured wider than it was lent.
+// This is the engine-side statement of "an agent does not become a new actor
+// type": a held grant is a capability checked against the live registry, never a
+// standing property of whoever holds it.
+//
+// TCB note: this proves the ALGEBRA of confinement (lease-gated + ceiling-bound)
+// purely, and it is RELATIVE TO THE REGISTRY: it trusts each provider's declared
+// ceiling. It does not prove (a) the runtime cannot stash a socket fd past
+// teardown, nor (b) that a provider's ceiling was legitimate to register. Both
+// reduce to the broker/substrate, not this engine: workcell isolation, the lease
+// clock, and PROVIDER ADMISSION (who may register a door, and how its ceiling is
+// bounded) are the broker's. A too-wide ceiling makes confinement vacuous at that
+// root — the engine will faithfully attenuate from broken authority. The gap is
+// named, not closed: see docs/authority-and-attenuation.md.
+
+/** Is `held` a capability the concierge could legitimately have handed out at
+ *  `now` — i.e. backed by a LIVE provider for `capability` and no wider than that
+ *  provider's ceiling? False once every backing lease has lapsed (the capability
+ *  does not outlive its provider) or if `held` widened past the ceiling (it was
+ *  never a derivation the concierge could grant). Mirrors `resolveProvider`'s
+ *  guarantee from the verification side: what was handed out stays confined. */
+export function isConfined(
+  held: DoorGrant,
+  entries: ProviderEntry[],
+  capability: string,
+  now: number,
+): boolean {
+  const live = liveProviders(entries, capability, now);
+  return live.some((p) => attenuatesDoors([held], [p.door]).ok);
 }
 
 /** Expand a named room to its door grants. Throws (fail closed, not a silent
