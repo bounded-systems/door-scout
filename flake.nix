@@ -10,7 +10,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/9f11f828c213641c2369a9f1fa31fe31557e3156";
 
   # scoutd needs the engine + the runtime helper (no provenance contract).
-  inputs.guest-room.url = "github:bounded-systems/guest-room/5bc85b634a0a8d698243ba3b708f0420516308ec";
+  inputs.guest-room.url = "github:bounded-systems/guest-room/79662abe154039d1bf91f46cefa03a06204e87ef";
   inputs.guest-room.flake = false;
   inputs.door-kit.url = "github:bounded-systems/door-kit/a3ae40e5075e3dbded3db9a0d345f842984a646b";
   inputs.door-kit.flake = false;
