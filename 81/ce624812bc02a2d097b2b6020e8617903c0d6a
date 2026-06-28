@@ -1,0 +1,23 @@
+guest-room/daemon.ts
+  s_d18f41cb48193c::t_0ccc533754ec0c 2,18,20
+guest-room/mod.ts
+  s_d18f41cb48193c::t_adaa1ea3755e9e 1-24,74,244-355,371,436-470
+guest-room/protocol.ts
+  s_d18f41cb48193c::t_3113004e141744 2,14-52,56,61-72,75,95-197,200,205,208-214,228,230-233,247,266,275-283,303-327,331-332,335,338,342-343,348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "81ce624812bc02a2d097b2b6020e8617903c0d6a",
+  "prompts": {},
+  "sessions": {
+    "s_d18f41cb48193c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e1595d1-4205-44e9-b5db-d6ccebeae882",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Robert DeLanghe <1240090+bdelanghe@users.noreply.github.com>"
+    }
+  }
+}
