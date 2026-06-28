@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 import type { Socket } from "bun";
 
 // Import shared daemon infrastructure
@@ -24,19 +24,23 @@ import {
   defaultSocketPath,
   prepareSocket,
   createLogger,
+  call,
   type RequestEnvelope,
   type ResponseEnvelope,
   ok,
   err,
 } from "./lib/runtime";
 
-// The guest-room capability engine: attenuation + its enforcement combinator.
+// The guest-room capability engine: attenuation + its enforcement combinator,
+// plus transit-grant verification (signed grants on tcp/vsock).
 import {
   attenuate,
   checkCaveats,
   unix,
+  verifyGrantWithKeys,
   type DoorGrant,
   type CaveatVerifiers,
+  type IssuerKeys,
 } from "./guest-room/mod.ts";
 
 const log = createLogger("scoutd");
@@ -511,6 +515,47 @@ const METHODS: Record<string, MethodHandler> = {
   download: handleDownload,
 };
 
+// ── Transit-grant gate (tcp/vsock only) ──────────────────────────────────────
+// On a unix door the held socket reference IS authority (the mount is the grant)
+// — no per-request check. On tcp/vsock the kernel gives no peer identity, so a
+// caller must present a SIGNED grant (req.grant) the concierge minted; we verify
+// it against the concierge's PUBLISHED keys (keyless, fetched + cached) for THIS
+// room and door. See the transport-split ADR / CONCIERGE.md §7. Set by serveTcp.
+let grantRequired = false;
+
+function conciergeSocket(): string {
+  if (process.env.CONCIERGE_SOCK) return process.env.CONCIERGE_SOCK;
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  if (runtime) return `${runtime}/concierged.sock`;
+  return `${process.env.HOME ?? "/tmp"}/.claude-box/concierged.sock`;
+}
+
+let issuerKeys: IssuerKeys | null = null;
+async function fetchIssuerKeys(force = false): Promise<IssuerKeys> {
+  if (issuerKeys && !force) return issuerKeys;
+  issuerKeys = await call<IssuerKeys>(conciergeSocket(), "keys");
+  return issuerKeys;
+}
+
+const verifyWith = (data: string, signature: string, publicKeyPem: string): boolean =>
+  edVerify(null, Buffer.from(data), createPublicKey(publicKeyPem), Buffer.from(signature, "base64"));
+
+/** Gate a request on a tcp/vsock door: verify the presented signed grant against
+ *  the concierge's published keys. Re-fetches keys ONCE on an unknown key (the
+ *  issuer rotated). Returns ok, or a reason for the denial. */
+async function gateGrant(req: RequestEnvelope): Promise<{ ok: boolean; reason?: string }> {
+  if (!grantRequired) return { ok: true }; // unix: reference is authority
+  const grant = req.grant;
+  if (!grant) return { ok: false, reason: "no-grant" };
+  if (grant.name !== "scout") return { ok: false, reason: "wrong-door" };
+  const ctx = { audience: process.env.ROOM_ID ?? "", now: Date.now() };
+  let v = verifyGrantWithKeys(grant, ctx, await fetchIssuerKeys(), verifyWith);
+  if (!v.ok && v.reason === "unknown-key") {
+    v = verifyGrantWithKeys(grant, ctx, await fetchIssuerKeys(true), verifyWith); // rotation
+  }
+  return v;
+}
+
 // ── Request handling ─────────────────────────────────────────────────────────
 // Protocol types (RequestEnvelope, ResponseEnvelope) imported from lib/runtime
 
@@ -526,6 +571,12 @@ async function handleRequest(line: string): Promise<ResponseEnvelope> {
 
   if (!id || !method) {
     return err(id ?? "", "INVALID_REQUEST", "id and method required");
+  }
+
+  // Transit-grant gate: on tcp/vsock, no valid signed grant ⇒ no handler reached.
+  const gate = await gateGrant(req);
+  if (!gate.ok) {
+    return err(id, "UNAUTHORIZED", `signed grant rejected: ${gate.reason}`);
   }
 
   const handler = METHODS[method];
@@ -578,7 +629,9 @@ async function serveUnix(socketPath: string): Promise<void> {
 
 // Bind to 0.0.0.0 so podman machine VM can reach us via host.containers.internal
 async function serveTcp(port: number, host: string = "0.0.0.0"): Promise<void> {
-  log("INFO", `listening tcp ${host}:${port} allow=${ALLOW.slice(0, 3).join(",")}... (fail-closed)`);
+  // tcp/vsock has no kernel peer identity ⇒ require a verified signed grant.
+  grantRequired = true;
+  log("INFO", `listening tcp ${host}:${port} allow=${ALLOW.slice(0, 3).join(",")}... (signed-grant gate, fail-closed)`);
 
   Bun.listen({
     hostname: host,
@@ -663,9 +716,18 @@ export {
   scoutDoor,
   scoutVerifiers,
   socketHandler,
+  gateGrant,
   parseGitHubRepo,
   VERSION,
 };
+
+/** Test seams: drive the tcp/vsock grant gate without a live concierge. */
+export function __setGrantRequired(v: boolean): void {
+  grantRequired = v;
+}
+export function __setIssuerKeys(k: IssuerKeys | null): void {
+  issuerKeys = k;
+}
 
 export type { RequestEnvelope, ResponseEnvelope };
 

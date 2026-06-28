@@ -1,4 +1,5 @@
 /**
+ * @module
  * daemon.ts — shared utilities for door daemons.
  *
  * Every daemon follows the same pattern:
@@ -14,7 +15,9 @@
  */
 
 import { mkdirSync, unlinkSync } from "node:fs";
+import process from "node:process";
 
+/** Environment variables (a map of names to values or undefined). */
 export type Env = Record<string, string | undefined>;
 
 /** Function to determine the run directory for sockets. */
