@@ -1,0 +1,15 @@
+name: standard
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  standard:
+    uses: bounded-systems/.github/.github/workflows/repo-standard.yml@d43c3280588ef05f4ead43426db1091d4cb8f520
+    with:
+      security: true
+      test: true
+      runtime: nix
+      test-command: "nix shell nixpkgs#bun -c bun test"
