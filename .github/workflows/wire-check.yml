@@ -1,0 +1,19 @@
+name: wire-check
+# Daemon-side wire conformance: scoutd's METHODS must match the published
+# scout-wire agreement. door-scout's flake checks are otherwise darwin-only and
+# never run in CI — this runs the Linux-scoped conformance check on every PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  scout-wire-methods:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
+      - uses: DeterminateSystems/flakehub-cache-action@4d48cd3cda2f381a3006ff800e1c1ca0c9809159 # v3.21.1
+      - name: scoutd METHODS conform to scout-wire
+        run: nix build --print-build-logs '.#checks.x86_64-linux.scout-wire-methods'
