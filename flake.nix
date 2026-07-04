@@ -14,8 +14,12 @@
   inputs.guest-room.flake = false;
   inputs.door-kit.url = "github:bounded-systems/door-kit/a3ae40e5075e3dbded3db9a0d345f842984a646b";
   inputs.door-kit.flake = false;
+  # the PUBLISHED scout-wire agreement — scoutd's own METHODS are checked against
+  # it, so the contract (not this daemon) is the source of truth.
+  inputs.scout-wire.url = "github:bounded-systems/scout-wire";
+  inputs.scout-wire.flake = false;
 
-  outputs = { self, nixpkgs, guest-room, door-kit }:
+  outputs = { self, nixpkgs, guest-room, door-kit, scout-wire }:
     let
       systems = [ "aarch64-linux" "x86_64-linux" ];
       forEach = nixpkgs.lib.genAttrs systems;
@@ -130,8 +134,24 @@
         };
 
       # ── mirror checks: the vendored dirs must match the pinned inputs ──
-      checks.aarch64-darwin =
-        let pkgs = pkgsFor "aarch64-darwin";
+      # ── daemon-side wire conformance (Linux, so CI actually runs it) ──
+      # scoutd's METHODS table must match the published scout-wire agreement.
+      checks = (forEach (system:
+        let pkgs = pkgsFor system;
+        in {
+          scout-wire-methods = pkgs.runCommand "scout-wire-methods" {
+            nativeBuildInputs = [ pkgs.deno ];
+            DENO_DIR = "/tmp/deno";
+          } ''
+            export HOME=$TMPDIR
+            deno run --no-remote --allow-read ${./tests/wire-methods.ts} \
+              ${./scoutd.ts} \
+              ${scout-wire}/manifest.json
+            touch $out
+          '';
+        })) // {
+        # ── mirror checks: the vendored dirs must match the pinned inputs ──
+        aarch64-darwin = let pkgs = pkgsFor "aarch64-darwin";
         in {
           guest-room-mirror = pkgs.runCommand "guest-room-mirror" { } ''
             for f in mod.ts daemon.ts protocol.ts; do
@@ -148,5 +168,6 @@
             touch $out
           '';
         };
+      };
     };
 }

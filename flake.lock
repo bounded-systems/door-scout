@@ -54,7 +54,24 @@
       "inputs": {
         "door-kit": "door-kit",
         "guest-room": "guest-room",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "scout-wire": "scout-wire"
+      }
+    },
+    "scout-wire": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783200410,
+        "narHash": "sha256-0IQ4NJ486cWA8BAVkefibUNjidsUxlK9YWNHAsYAuAo=",
+        "owner": "bounded-systems",
+        "repo": "scout-wire",
+        "rev": "79bedb301ab4b2d19ce97cdfbc5122c964dc9913",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bounded-systems",
+        "repo": "scout-wire",
+        "type": "github"
       }
     }
   },
