@@ -1,0 +1,19 @@
+flake.lock
+  s_d29d2cf4f90689::t_ec7378cc98f938 64-65,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "0c176319d35b51a8b13b15ea31e7baa44e97b477",
+  "prompts": {},
+  "sessions": {
+    "s_d29d2cf4f90689": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86eac30a-2a2d-4a49-9739-5c67147528f5",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Robert DeLanghe <1240090+bdelanghe@users.noreply.github.com>"
+    }
+  }
+}
