@@ -196,6 +196,43 @@ async function githubFetch(path: string): Promise<Response> {
   return egressFetch(`https://api.github.com${path}`, { headers });
 }
 
+/**
+ * POST a GraphQL query to the GitHub API — the only way to read Projects v2
+ * (the `project` method's transport; no REST equivalent exists). Same token,
+ * same allowlist host (api.github.com) as githubFetch's REST calls.
+ */
+async function githubGraphQL(
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "scoutd/0.1.0",
+  };
+  if (githubToken) {
+    headers["Authorization"] = `Bearer ${githubToken}`;
+  }
+  const resp = await egressFetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!resp.ok) {
+    throw { code: "GITHUB_ERROR", message: `GitHub API error: ${resp.status}` };
+  }
+  const body = await resp.json() as {
+    data?: Record<string, unknown>;
+    errors?: Array<{ message: string }>;
+  };
+  if (body.errors?.length) {
+    throw { code: "GITHUB_ERROR", message: body.errors.map((e) => e.message).join("; ") };
+  }
+  if (!body.data) {
+    throw { code: "GITHUB_ERROR", message: "GraphQL response had no data" };
+  }
+  return body.data;
+}
+
 // ── Method handlers ──────────────────────────────────────────────────────────
 
 type MethodHandler = (params: Record<string, unknown>) => Promise<unknown>;
@@ -388,6 +425,135 @@ async function handleIssue(params: Record<string, unknown>): Promise<unknown> {
   return result;
 }
 
+/** One item on a Projects v2 board, as returned by the `project` method. */
+type ProjectItemResult = {
+  number: number;
+  title: string;
+  url: string;
+  repo: string;
+  contentType: "Issue" | "PullRequest";
+  state: string;
+  fields: Record<string, string | number>;
+};
+
+/**
+ * Fetch items from a GitHub Projects v2 board (e.g. Front Desk). GraphQL-only
+ * — there is no REST equivalent for Projects v2. Read-only: no mutation is
+ * exposed here (setting Status/Score stays a host-side, App-token operation —
+ * writes go through a lease-token door, e.g. prx's forge-d; this door only
+ * lets the box SEE the board, not write to it).
+ *
+ * Returns raw field values per item; the board's own view-level sort (e.g.
+ * "Ready (ranked)" by Score) isn't queryable through this API, so the caller
+ * sorts client-side.
+ */
+async function handleProject(params: Record<string, unknown>): Promise<unknown> {
+  const org = params.org as string;
+  const number = params.number as number;
+  const first = Math.min((params.first as number) ?? 50, 100);
+  const after = (params.after as string) ?? null;
+
+  if (!org || !number) {
+    throw { code: "INVALID_PARAMS", message: "org and number required" };
+  }
+
+  if (!allowed("api.github.com")) {
+    log("DENY", `project ${org}/${number} (api.github.com not allowed)`);
+    throw { code: "NOT_ALLOWED", message: "GitHub API not in allowlist" };
+  }
+
+  log("ALLOW", `project ${org}#${number}`);
+
+  const data = await githubGraphQL(
+    `query($org:String!,$num:Int!,$first:Int!,$after:String){
+      organization(login:$org){ projectV2(number:$num){
+        title
+        items(first:$first, after:$after){
+          pageInfo{ hasNextPage endCursor }
+          nodes{
+            content{
+              __typename
+              ... on Issue{ number title url state repository{ nameWithOwner } }
+              ... on PullRequest{ number title url state repository{ nameWithOwner } }
+            }
+            fieldValues(first:20){ nodes{
+              ... on ProjectV2ItemFieldSingleSelectValue{
+                field{ ... on ProjectV2FieldCommon{ name } } name
+              }
+              ... on ProjectV2ItemFieldNumberValue{
+                field{ ... on ProjectV2FieldCommon{ name } } number
+              }
+              ... on ProjectV2ItemFieldTextValue{
+                field{ ... on ProjectV2FieldCommon{ name } } text
+              }
+            } }
+          }
+        }
+      } }
+    }`,
+    { org, num: number, first, after },
+  );
+
+  const proj = (data.organization as Record<string, unknown>)?.projectV2 as
+    | Record<string, unknown>
+    | undefined;
+  if (!proj) {
+    throw { code: "NOT_FOUND", message: `no project #${number} for org ${org}` };
+  }
+
+  const itemsConn = proj.items as {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: Array<{
+      content: {
+        __typename?: string;
+        number?: number;
+        title?: string;
+        url?: string;
+        state?: string;
+        repository?: { nameWithOwner?: string };
+      } | null;
+      fieldValues: {
+        nodes: Array<
+          {
+            field?: { name?: string };
+            name?: string | null;
+            number?: number | null;
+            text?: string | null;
+          }
+        >;
+      };
+    }>;
+  };
+
+  const items: ProjectItemResult[] = [];
+  for (const n of itemsConn.nodes) {
+    if (!n.content?.number) continue; // draft issues have no repo/number
+    const fields: Record<string, string | number> = {};
+    for (const fv of n.fieldValues.nodes) {
+      const name = fv.field?.name;
+      if (!name) continue;
+      if (fv.name != null) fields[name] = fv.name;
+      else if (fv.number != null) fields[name] = fv.number;
+      else if (fv.text != null) fields[name] = fv.text;
+    }
+    items.push({
+      number: n.content.number,
+      title: n.content.title ?? "",
+      url: n.content.url ?? "",
+      repo: n.content.repository?.nameWithOwner ?? "",
+      contentType: (n.content.__typename as "Issue" | "PullRequest") ?? "Issue",
+      state: n.content.state ?? "",
+      fields,
+    });
+  }
+
+  return {
+    title: proj.title,
+    items,
+    pageInfo: itemsConn.pageInfo,
+  };
+}
+
 /**
  * Fetch an arbitrary URL (with allowlist enforcement).
  * Returns the response body as text or base64.
@@ -511,6 +677,7 @@ const METHODS: Record<string, MethodHandler> = {
   repo: handleRepo,
   pr: handlePr,
   issue: handleIssue,
+  project: handleProject,
   fetch: handleFetch,
   download: handleDownload,
 };
@@ -735,6 +902,7 @@ The daemon listens for NDJSON requests:
   - repo        fetch GitHub repo metadata + tarball URL
   - pr          fetch PR metadata, diff, comments
   - issue       fetch issue metadata + comments
+  - project     fetch Projects v2 board items (read-only; GraphQL)
   - fetch       fetch arbitrary URL (allowlist enforced)
   - download    download file content (base64)
 
@@ -757,6 +925,7 @@ export {
   handleRepo,
   handlePr,
   handleIssue,
+  handleProject,
   handleFetch,
   handleDownload,
   loadToken,
