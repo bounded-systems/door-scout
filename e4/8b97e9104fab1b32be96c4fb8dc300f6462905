@@ -1,0 +1,28 @@
+tests/scoutd.test.ts
+  s_d29d2cf4f90689::t_e2d8c05dd0c5cb 168-181
+scoutd.ts
+  s_d29d2cf4f90689::t_b110c474fd4e6b 928
+  s_d29d2cf4f90689::t_7c331a3f56b1f9 680
+  s_d29d2cf4f90689::t_c7b7796bbdc289 905
+  s_d29d2cf4f90689::t_1306ecd06609fe 428-556
+  s_d29d2cf4f90689::t_0b4a4b27940e0d 199-235
+tests/scoutd-project.test.ts
+  s_d29d2cf4f90689::t_719925e6ef9412 1-123,126-154
+  s_d29d2cf4f90689::t_bb82f71f430554 124-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "e48b97e9104fab1b32be96c4fb8dc300f6462905",
+  "prompts": {},
+  "sessions": {
+    "s_d29d2cf4f90689": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86eac30a-2a2d-4a49-9739-5c67147528f5",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Robert DeLanghe <1240090+bdelanghe@users.noreply.github.com>"
+    }
+  }
+}
