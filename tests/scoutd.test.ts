@@ -165,6 +165,20 @@ test("issue: missing repo returns error", async () => {
   expect(resp.error?.code).toBe("INVALID_PARAMS");
 });
 
+test("project: missing org returns error", async () => {
+  const resp = await handleRequest(JSON.stringify({ id: "1", method: "project", params: { number: 2 } }));
+  expect(resp.ok).toBe(false);
+  expect(resp.error?.code).toBe("INVALID_PARAMS");
+});
+
+test("project: missing number returns error", async () => {
+  const resp = await handleRequest(
+    JSON.stringify({ id: "1", method: "project", params: { org: "bounded-systems" } }),
+  );
+  expect(resp.ok).toBe(false);
+  expect(resp.error?.code).toBe("INVALID_PARAMS");
+});
+
 test("fetch: missing url returns error", async () => {
   const resp = await handleRequest(JSON.stringify({ id: "1", method: "fetch", params: {} }));
   expect(resp.ok).toBe(false);
