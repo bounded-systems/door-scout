@@ -559,6 +559,52 @@ async function gateGrant(req: RequestEnvelope): Promise<{ ok: boolean; reason?: 
 // ── Request handling ─────────────────────────────────────────────────────────
 // Protocol types (RequestEnvelope, ResponseEnvelope) imported from lib/runtime
 
+// ── wire-contract shadow validation (log-only) ───────────────────────────────
+// The published scout-wire agreement, bundled next to scoutd in the image. When
+// absent (running the source in tests) it's null and the check is skipped. It
+// NEVER rejects: a mismatch is LOGGED (surfacing spec↔handler drift), request
+// handling is unaffected.
+interface WireManifest {
+  methods: string[];
+  params: Record<string, string[]>;
+}
+let wireManifest: WireManifest | null = (() => {
+  try {
+    const p = new URL("./scout-wire.manifest.json", import.meta.url).pathname;
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+})();
+
+/** Test seam: inject (or clear) the agreement manifest. */
+export function __setWireManifest(m: WireManifest | null): void {
+  wireManifest = m;
+}
+
+/**
+ * Shadow-validate a request's params against the published agreement — LOG ONLY.
+ * Warns on params the contract doesn't declare (drift); never rejects. `kind` is
+ * the request-envelope discriminator, not a verb param.
+ */
+export function shadowCheckParams(
+  method: string,
+  params: Record<string, unknown>,
+): void {
+  if (!wireManifest) return;
+  const declared = wireManifest.params[method];
+  if (!declared) return;
+  const allow = new Set([...declared, "kind"]);
+  const unexpected = Object.keys(params).filter((k) => !allow.has(k));
+  if (unexpected.length) {
+    console.warn(
+      `scout-wire: request "${method}" sends undeclared param(s): ${
+        unexpected.join(", ")
+      } — spec/handler drift`,
+    );
+  }
+}
+
 async function handleRequest(line: string): Promise<ResponseEnvelope> {
   let req: RequestEnvelope;
   try {
@@ -583,6 +629,8 @@ async function handleRequest(line: string): Promise<ResponseEnvelope> {
   if (!handler) {
     return err(id, "UNKNOWN_METHOD", `unknown method: ${method}`);
   }
+
+  shadowCheckParams(method, params ?? {});
 
   try {
     const result = await handler(params ?? {});

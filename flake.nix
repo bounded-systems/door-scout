@@ -48,6 +48,9 @@
               scoutdSrc = pkgs.runCommand "scoutd-src" { } ''
                 mkdir -p $out/app/lib $out/app/guest-room
                 cp ${./scoutd.ts} $out/app/scoutd.ts
+                # the published scout-wire agreement, next to scoutd for the
+                # runtime shadow-validation (log-only). Kept fresh by the pin.
+                cp ${scout-wire}/manifest.json $out/app/scout-wire.manifest.json
                 cp ${./lib/runtime.ts} $out/app/lib/runtime.ts
                 cp ${./guest-room/mod.ts} $out/app/guest-room/mod.ts
                 cp ${./guest-room/daemon.ts} $out/app/guest-room/daemon.ts
