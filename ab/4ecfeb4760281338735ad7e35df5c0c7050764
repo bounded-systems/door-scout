@@ -1,0 +1,19 @@
+.github/workflows/flakehub-publish.yml
+  s_590a4cb0d433ca::t_01771f34f2bccf 1-3,12,21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "ab4ecfeb4760281338735ad7e35df5c0c7050764",
+  "prompts": {},
+  "sessions": {
+    "s_590a4cb0d433ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b0655308-1b11-42b1-889b-668f5601293b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Robert DeLanghe <1240090+bdelanghe@users.noreply.github.com>"
+    }
+  }
+}
