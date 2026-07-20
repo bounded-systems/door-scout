@@ -154,6 +154,12 @@ function sha256(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+/** Error message from a thrown daemon error ({code,message}) or any value. */
+function errMessage(e: unknown): string {
+  const m = (e as { message?: string })?.message;
+  return typeof m === "string" ? m : String(e);
+}
+
 /** Parse a GitHub URL/spec into owner/repo. */
 function parseGitHubRepo(input: string): { owner: string; repo: string } | null {
   // Handle: owner/repo, github.com/owner/repo, https://github.com/owner/repo
@@ -432,7 +438,15 @@ type ProjectItemResult = {
   url: string;
   repo: string;
   contentType: "Issue" | "PullRequest";
-  state: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  /** Issue/PR node id — lets a caller derive board membership. */
+  contentId: string;
+  /** ProjectV2Item node id — the handle a write path would target. */
+  itemId: string;
+  /** ISO 8601 creation timestamp — feeds age-based prioritization. */
+  createdAt: string;
+  /** Visibility of the item's repo — public/private board contract. */
+  isPrivate: boolean;
   fields: Record<string, string | number>;
 };
 
@@ -471,10 +485,11 @@ async function handleProject(params: Record<string, unknown>): Promise<unknown> 
         items(first:$first, after:$after){
           pageInfo{ hasNextPage endCursor }
           nodes{
+            id
             content{
               __typename
-              ... on Issue{ number title url state repository{ nameWithOwner } }
-              ... on PullRequest{ number title url state repository{ nameWithOwner } }
+              ... on Issue{ id number title url state createdAt repository{ nameWithOwner isPrivate } }
+              ... on PullRequest{ id number title url state createdAt repository{ nameWithOwner isPrivate } }
             }
             fieldValues(first:20){ nodes{
               ... on ProjectV2ItemFieldSingleSelectValue{
@@ -504,13 +519,16 @@ async function handleProject(params: Record<string, unknown>): Promise<unknown> 
   const itemsConn = proj.items as {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
     nodes: Array<{
+      id?: string;
       content: {
         __typename?: string;
+        id?: string;
         number?: number;
         title?: string;
         url?: string;
         state?: string;
-        repository?: { nameWithOwner?: string };
+        createdAt?: string;
+        repository?: { nameWithOwner?: string; isPrivate?: boolean };
       } | null;
       fieldValues: {
         nodes: Array<
@@ -542,7 +560,11 @@ async function handleProject(params: Record<string, unknown>): Promise<unknown> 
       url: n.content.url ?? "",
       repo: n.content.repository?.nameWithOwner ?? "",
       contentType: (n.content.__typename as "Issue" | "PullRequest") ?? "Issue",
-      state: n.content.state ?? "",
+      state: (n.content.state as "OPEN" | "CLOSED" | "MERGED") ?? "OPEN",
+      contentId: n.content.id ?? "",
+      itemId: n.id ?? "",
+      createdAt: n.content.createdAt ?? "",
+      isPrivate: n.content.repository?.isPrivate ?? false,
       fields,
     });
   }
@@ -552,6 +574,249 @@ async function handleProject(params: Record<string, unknown>): Promise<unknown> 
     items,
     pageInfo: itemsConn.pageInfo,
   };
+}
+
+// ── Org-wide reads (Projects v2 sweeps; mirror gh-project-room's projects.ts) ──
+
+type OrgRepoResult = { id: string; name: string; isPrivate: boolean };
+
+/**
+ * List an org's repositories (paged). Fail-closed on visibility: by default only
+ * explicitly-public repos are returned (`isPrivate === false`), so an org sweep
+ * can never surface a private repo's work — parity with the consumer's own
+ * public-board contract. `includePrivate` opts into private repos.
+ */
+async function fetchOrgRepos(
+  org: string,
+  includePrivate: boolean,
+): Promise<OrgRepoResult[]> {
+  const repos: OrgRepoResult[] = [];
+  let cursor: string | null = null;
+  do {
+    const data = await githubGraphQL(
+      `query($org:String!,$after:String){
+        organization(login:$org){
+          repositories(first:100, after:$after, orderBy:{field:NAME,direction:ASC}){
+            pageInfo{ hasNextPage endCursor }
+            nodes{ id name isPrivate }
+          }
+        }
+      }`,
+      { org, after: cursor },
+    );
+    const orgNode = data.organization as Record<string, unknown> | undefined;
+    const conn = orgNode?.repositories as {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      nodes: Array<{ id: string; name: string; isPrivate: boolean }>;
+    } | undefined;
+    if (!conn) break;
+    for (const r of conn.nodes) {
+      if (!includePrivate && r.isPrivate !== false) continue; // fail closed
+      repos.push({ id: r.id, name: r.name, isPrivate: r.isPrivate });
+    }
+    cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
+  } while (cursor);
+  return repos;
+}
+
+/** List an org's repositories. */
+async function handleRepos(params: Record<string, unknown>): Promise<unknown> {
+  const org = params.org as string;
+  const includePrivate = (params.includePrivate as boolean) ?? false;
+  if (!org) throw { code: "INVALID_PARAMS", message: "org required" };
+  if (!allowed("api.github.com")) {
+    log("DENY", `repos ${org} (api.github.com not allowed)`);
+    throw { code: "NOT_ALLOWED", message: "GitHub API not in allowlist" };
+  }
+  log("ALLOW", `repos ${org}`);
+  return { repos: await fetchOrgRepos(org, includePrivate) };
+}
+
+type WorkItemResult = {
+  id: string;
+  kind: "Issue" | "PullRequest";
+  repo: string;
+  number: number;
+  title: string;
+  labels: string[];
+  hasSubIssues: boolean;
+};
+
+/**
+ * Open issues or PRs in one repo (paged). `withSubIssues=false` drops the gated
+ * `subIssues` field (which some tokens can't read) so the caller can retry and
+ * one inaccessible field never aborts the sweep.
+ */
+async function openIn(
+  org: string,
+  repo: string,
+  field: "issues" | "pullRequests",
+  withSubIssues = true,
+): Promise<WorkItemResult[]> {
+  const kind: "Issue" | "PullRequest" = field === "issues"
+    ? "Issue"
+    : "PullRequest";
+  const subIssuesSel = field === "issues" && withSubIssues
+    ? "subIssues(first:0){ totalCount }"
+    : "";
+  const out: WorkItemResult[] = [];
+  let cursor: string | null = null;
+  do {
+    const data = await githubGraphQL(
+      `query($org:String!,$repo:String!,$after:String){
+        repository(owner:$org, name:$repo){
+          conn: ${field}(first:100, after:$after, states:OPEN){
+            pageInfo{ hasNextPage endCursor }
+            nodes{ id number title labels(first:20){ nodes{ name } } ${subIssuesSel} }
+          }
+        }
+      }`,
+      { org, repo, after: cursor },
+    );
+    const repoNode = data.repository as Record<string, unknown> | undefined;
+    const conn = repoNode?.conn as {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      nodes: Array<{
+        id: string;
+        number: number;
+        title: string;
+        labels?: { nodes: Array<{ name: string }> } | null;
+        subIssues?: { totalCount: number };
+      }>;
+    } | null | undefined;
+    if (!conn) break;
+    for (const n of conn.nodes) {
+      out.push({
+        id: n.id,
+        kind,
+        repo,
+        number: n.number,
+        title: n.title,
+        labels: (n.labels?.nodes ?? []).map((l) => l.name),
+        hasSubIssues: (n.subIssues?.totalCount ?? 0) > 0,
+      });
+    }
+    cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
+  } while (cursor);
+  return out;
+}
+
+/**
+ * Every open issue/PR across an org's (public) repos. Resilient: a repo whose
+ * read fails is recorded in `skipped` and the sweep continues, so one
+ * inaccessible repo never aborts the whole enumeration.
+ */
+async function handleOrgOpenWork(
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const org = params.org as string;
+  if (!org) throw { code: "INVALID_PARAMS", message: "org required" };
+  if (!allowed("api.github.com")) {
+    log("DENY", `orgOpenWork ${org} (api.github.com not allowed)`);
+    throw { code: "NOT_ALLOWED", message: "GitHub API not in allowlist" };
+  }
+  log("ALLOW", `orgOpenWork ${org}`);
+  const repos = await fetchOrgRepos(org, false);
+  const items: WorkItemResult[] = [];
+  const skipped: Array<{ repo: string; reason: string }> = [];
+  for (const repo of repos) {
+    try {
+      try {
+        items.push(...await openIn(org, repo.name, "issues"));
+      } catch {
+        // Most likely the gated `subIssues` field — retry without it.
+        items.push(...await openIn(org, repo.name, "issues", false));
+      }
+      items.push(...await openIn(org, repo.name, "pullRequests"));
+    } catch (e) {
+      skipped.push({ repo: repo.name, reason: errMessage(e) });
+    }
+  }
+  return { items, skipped };
+}
+
+type MergedPrResult = {
+  repo: string;
+  number: number;
+  title: string;
+  authorLogin: string | null;
+  labels: string[];
+  closingIssueCount: number;
+};
+
+/** Merged PRs in one repo (paged), with closing-issue counts for traceability. */
+async function mergedIn(org: string, repo: string): Promise<MergedPrResult[]> {
+  const out: MergedPrResult[] = [];
+  let cursor: string | null = null;
+  do {
+    const data = await githubGraphQL(
+      `query($org:String!,$repo:String!,$after:String){
+        repository(owner:$org, name:$repo){
+          pullRequests(first:100, after:$after, states:MERGED){
+            pageInfo{ hasNextPage endCursor }
+            nodes{
+              number title
+              author{ login }
+              labels(first:20){ nodes{ name } }
+              closingIssuesReferences{ totalCount }
+            }
+          }
+        }
+      }`,
+      { org, repo, after: cursor },
+    );
+    const repoNode = data.repository as Record<string, unknown> | undefined;
+    const conn = repoNode?.pullRequests as {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      nodes: Array<{
+        number: number;
+        title: string;
+        author: { login?: string } | null;
+        labels?: { nodes: Array<{ name: string }> } | null;
+        closingIssuesReferences: { totalCount: number };
+      }>;
+    } | undefined;
+    if (!conn) break;
+    for (const n of conn.nodes) {
+      out.push({
+        repo,
+        number: n.number,
+        title: n.title,
+        authorLogin: n.author?.login ?? null,
+        labels: (n.labels?.nodes ?? []).map((l) => l.name),
+        closingIssueCount: n.closingIssuesReferences.totalCount,
+      });
+    }
+    cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
+  } while (cursor);
+  return out;
+}
+
+/**
+ * Every merged PR across an org's (public) repos — traceability data. Same
+ * per-repo resilience as `orgOpenWork`: an unreadable repo is skipped, not fatal.
+ */
+async function handleOrgMergedPrs(
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const org = params.org as string;
+  if (!org) throw { code: "INVALID_PARAMS", message: "org required" };
+  if (!allowed("api.github.com")) {
+    log("DENY", `orgMergedPrs ${org} (api.github.com not allowed)`);
+    throw { code: "NOT_ALLOWED", message: "GitHub API not in allowlist" };
+  }
+  log("ALLOW", `orgMergedPrs ${org}`);
+  const repos = await fetchOrgRepos(org, false);
+  const items: MergedPrResult[] = [];
+  const skipped: Array<{ repo: string; reason: string }> = [];
+  for (const repo of repos) {
+    try {
+      items.push(...await mergedIn(org, repo.name));
+    } catch (e) {
+      skipped.push({ repo: repo.name, reason: errMessage(e) });
+    }
+  }
+  return { items, skipped };
 }
 
 /**
@@ -675,9 +940,12 @@ async function handleDownload(params: Record<string, unknown>): Promise<unknown>
 const METHODS: Record<string, MethodHandler> = {
   status: handleStatus,
   repo: handleRepo,
+  repos: handleRepos,
   pr: handlePr,
   issue: handleIssue,
   project: handleProject,
+  orgOpenWork: handleOrgOpenWork,
+  orgMergedPrs: handleOrgMergedPrs,
   fetch: handleFetch,
   download: handleDownload,
 };
@@ -900,9 +1168,12 @@ Usage:
 The daemon listens for NDJSON requests:
   - status      health check + allowlist
   - repo        fetch GitHub repo metadata + tarball URL
+  - repos       list an org's repositories
   - pr          fetch PR metadata, diff, comments
   - issue       fetch issue metadata + comments
   - project     fetch Projects v2 board items (read-only; GraphQL)
+  - orgOpenWork every open issue/PR across an org's repos
+  - orgMergedPrs every merged PR across an org's repos (traceability)
   - fetch       fetch arbitrary URL (allowlist enforced)
   - download    download file content (base64)
 
@@ -923,9 +1194,12 @@ export {
   handleRequest,
   handleStatus,
   handleRepo,
+  handleRepos,
   handlePr,
   handleIssue,
   handleProject,
+  handleOrgOpenWork,
+  handleOrgMergedPrs,
   handleFetch,
   handleDownload,
   loadToken,
