@@ -15,6 +15,6 @@ permissions:
 
 jobs:
   release:
-    uses: bounded-systems/mint/.github/workflows/release-provenance.yml@v0.3.1 # mint
+    uses: bounded-systems/mint/.github/workflows/release-provenance.yml@v0.5.0 # mint
     with:
-      ref: v0.3.1
+      ref: v0.5.0
