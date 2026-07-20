@@ -43,11 +43,14 @@ import {
   type IssuerKeys,
 } from "./guest-room/mod.ts";
 
+// The single source of truth for the daemon's version — the mint-owned manifest.
+import pkg from "./package.json" with { type: "json" };
+
 const log = createLogger("scoutd");
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const VERSION = "0.1.0";
+const VERSION = pkg.version;
 
 // Default allowlist: GitHub + common registries
 const DEFAULT_ALLOW = [

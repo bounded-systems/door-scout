@@ -1,0 +1,65 @@
+name: cut release
+
+# mint is the ONLY thing that cuts a release tag — never a hand-pushed tag.
+# Dispatch this (Actions UI) to run, entirely in CI:
+#   mint version → bump the version manifest + prepend CHANGELOG + consume the
+#                  .release/ intents
+#   commit the bump to main
+#   mint release → cut + PUSH the v<version> tag, which drives publish-ghcr.yml
+#                  (the scoutd OCI image) + release.yml (in-toto provenance)
+#
+# No-op when there are no intents. REQUIRES: the workflow may push to `main`
+# (allow GitHub Actions in branch protection, or swap in a deploy/app token).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # push the version-bump commit + the release tag
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - name: Checkout mint
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: bounded-systems/mint
+          ref: v0.3.1
+          path: .mint
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+      - name: Install mint deps
+        working-directory: .mint
+        run: npm ci --no-audit --no-fund
+      - name: Git identity
+        run: |
+          git config user.name "mint"
+          git config user.email "noreply@anthropic.com"
+      - name: mint version — bump + changelog + consume intents
+        id: mv
+        run: |
+          out="$(node .mint/mint.mjs version)"; printf '%s\n' "$out"
+          next="$(printf '%s\n' "$out" | grep -oE '→ [0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -dc '0-9.')"
+          if [ -z "$next" ]; then
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "next=$next" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit the bump, then mint release (cut + push the tag)
+        if: steps.mv.outputs.released == 'true'
+        run: |
+          git add -A
+          git commit -m "chore(release): v${{ steps.mv.outputs.next }}"
+          git push origin HEAD:main
+          node .mint/mint.mjs release # cuts + pushes v<version>
