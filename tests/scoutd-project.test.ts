@@ -24,13 +24,19 @@ const boardFixture = {
         pageInfo: { hasNextPage: false, endCursor: null },
         nodes: [
           {
+            id: "PVTI_item62",
             content: {
               __typename: "Issue",
+              id: "I_issue62",
               number: 62,
               title: "front-desk-health: scorecard computation + CLI",
               url: "https://github.com/bounded-systems/gh-project-room/issues/62",
               state: "CLOSED",
-              repository: { nameWithOwner: "bounded-systems/gh-project-room" },
+              createdAt: "2026-01-01T00:00:00Z",
+              repository: {
+                nameWithOwner: "bounded-systems/gh-project-room",
+                isPrivate: false,
+              },
             },
             fieldValues: {
               nodes: [
@@ -79,6 +85,10 @@ describe("handleProject", () => {
       repo: "bounded-systems/gh-project-room",
       contentType: "Issue",
       state: "CLOSED",
+      contentId: "I_issue62",
+      itemId: "PVTI_item62",
+      createdAt: "2026-01-01T00:00:00Z",
+      isPrivate: false,
       fields: { Status: "Done", Kind: "epic", Score: 3 },
     });
     expect(result.pageInfo).toEqual({ hasNextPage: false, endCursor: null });

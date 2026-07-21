@@ -61,11 +61,11 @@
     "scout-wire": {
       "flake": false,
       "locked": {
-        "lastModified": 1783223252,
-        "narHash": "sha256-ie+kXf+q0X+shKuStCW96z9v7gOBUCFSnRSLawwM1DU=",
+        "lastModified": 1784634291,
+        "narHash": "sha256-HDXzK8+tp5wlhQVXVCaQO7i5WBGzEJREn2MZoEwD3qA=",
         "owner": "bounded-systems",
         "repo": "scout-wire",
-        "rev": "eced78a105fdc6b427933660b9e30103cf2c3c6d",
+        "rev": "afda2922658021825a46856b40d4759be41cf89d",
         "type": "github"
       },
       "original": {

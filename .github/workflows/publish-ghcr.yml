@@ -3,6 +3,9 @@ name: publish-ghcr
 # Build the pinned scoutd OCI image with nix and push it to GHCR. Run manually
 # (workflow_dispatch); defaults to the `dev` tag. The image is the door's product.
 on:
+  # mint cuts the v<version> tag → the scoutd OCI image ships at that version.
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
@@ -18,7 +21,8 @@ permissions:
 env:
   # ghcr.io/<owner>/door-scout/scoutd
   REGISTRY: ghcr.io/${{ github.repository_owner }}/door-scout
-  VERSION: ${{ inputs.version }}
+  # dispatch → the input (default "dev"); tag push → the tag name (v<version>).
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   build:
