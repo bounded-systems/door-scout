@@ -1,0 +1,36 @@
+name: flake-update
+
+# Bump a flake input (default: scout-wire) in CI — no local nix needed.
+# Dispatch on any branch; the refreshed flake.lock is committed back to that
+# branch (e.g. run it on a PR branch to re-pin scout-wire and turn wire-check
+# green). nix is provided by the Determinate installer, same as wire-check.
+on:
+  workflow_dispatch:
+    inputs:
+      input:
+        description: "Flake input to update"
+        default: scout-wire
+        type: string
+
+permissions:
+  contents: write # push the flake.lock bump back to the branch
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
+      - name: nix flake update ${{ inputs.input }}
+        run: nix flake update "${{ inputs.input }}"
+      - name: Commit + push the lockfile bump
+        run: |
+          if git diff --quiet -- flake.lock; then
+            echo "flake.lock unchanged — nothing to do"; exit 0
+          fi
+          git config user.name "flake-update"
+          git config user.email "noreply@anthropic.com"
+          git commit -m "chore: nix flake update ${{ inputs.input }}" -- flake.lock
+          git push origin "HEAD:${{ github.ref_name }}"
