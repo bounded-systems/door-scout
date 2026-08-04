@@ -1,0 +1,64 @@
+# Keep every action pin current — including the shared osv-scan lane's.
+#
+# DESTINATION: .github/dependabot.yml — NOT .github/workflows/. This is repo
+# configuration, not a workflow.
+#
+# WHY DEPENDABOT AND NOT A BESPOKE RE-PIN BOT (ci-workflows#10)
+# -------------------------------------------------------------
+# A caller's `uses: ...@<sha>` resolves the reusable workflow AT THAT COMMIT, so
+# a stale pin means the repo runs an old scanner with old rules. The 2026-08-03
+# census (caller-pins.yml) measured 43 of 58 callers behind the template, and
+# nothing makes a stale caller go red on its own.
+#
+# The fix decomposes the way OpenTofu does: the template is the DESIRED STATE,
+# the caller-pins census is the PLAN (an ancestry diff of actual vs desired),
+# and something has to be the APPLY. Dependabot's `github-actions` ecosystem is
+# that applier, chosen over a broker-credentialed bot because:
+#
+#   - the engine is GitHub-maintained — nothing bespoke to keep working;
+#   - no new credential: a custom actor would need org-wide contents:write PLUS
+#     the `workflows` permission (GitHub rejects workflow-file pushes without
+#     it), minted from a broker entry that would make ci-workflows' main able to
+#     reach every repo's contents — a posture change SHA pins exist to avoid;
+#   - it covers consumers the census cannot see: repos that call the lane from
+#     inside a combined workflow (infra's _infra-test.yml) rather than a
+#     byte-identical deps.yml, and every OTHER action pin (checkout,
+#     setup-node, setup-deno) going stale the same way.
+#
+# Dependabot converges callers onto each referenced repo's LATEST TAG — not its
+# default-branch head. An untagged repo is invisible to it: guest-room ran this
+# exact ecosystem weekly since June and its group PR bumped checkout/codeql pins
+# while leaving the osv-scan pin three template moves behind, because
+# ci-workflows had no tags. release-tag.yml now mints one per lane change,
+# which is the piece of state that makes this config able to act on the lane
+# pin at all. The census stays on as the independent verifier — Dependabot
+# proposes, a human merges, the Monday census proves. Once the fleet reads
+# current, flip caller-pins' `fail-on-lag` to true: plan must be empty.
+#
+# ADOPTING THIS FILE
+# ------------------
+# Repo has no .github/dependabot.yml: copy this file byte-identical.
+# Repo already has one (other ecosystems — npm, cargo, pip): APPEND the single
+# `github-actions` entry below to its `updates:` list instead. Byte-identity is
+# the norm, not a law; a merged config is correct, a clobbered one is not.
+#
+# The `ci` commit-message prefix is load-bearing: semantic-PR gates in this org
+# reject `deps:` (claude-box did, during the rollout), and `ci:` is the accurate
+# conventional-commit type for CI configuration.
+#
+# The single `actions` group collapses each week's bumps into ONE PR per repo —
+# 58 repos on a weekly schedule is otherwise a noise machine nobody reads,
+# which is the required-baseline.yml failure with extra steps.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
