@@ -34,7 +34,7 @@ jobs:
           - { arch: arm64, system: aarch64-linux, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
@@ -44,7 +44,7 @@ jobs:
 
       # Shared nix binary cache: cache hits skip the image rebuild; only changed
       # derivations build (then get pushed). OIDC auth - no secret.
-      - uses: DeterminateSystems/flakehub-cache-action@4d48cd3cda2f381a3006ff800e1c1ca0c9809159 # v3.21.1
+      - uses: DeterminateSystems/flakehub-cache-action@e62e272c914d4ad8e4d1587a864e9c3ad2cba9de # v3.21.9
 
       - name: Use a v2 containers registries.conf
         run: |
