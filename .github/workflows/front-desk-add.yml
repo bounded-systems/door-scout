@@ -59,14 +59,14 @@ jobs:
         id: app-token
         if: ${{ vars.CF_BROKER_URL != '' }}
         continue-on-error: true
-        uses: bounded-systems/.github/.github/actions/broker-gh-token@d1b25e3bb48ba919f2af0f1ab83063a1d76d88d4 # broker-gh-token (prx-26bq), .github#109
+        uses: bounded-systems/.github/.github/actions/broker-gh-token@99e88a0335519cb78be8a1b6623105613fa6aca1 # broker-gh-token (prx-26bq), .github#109
         with:
           app: front-desk
           broker-url: ${{ vars.CF_BROKER_URL }}
       - name: Add to Front Desk
         if: ${{ vars.CF_BROKER_URL != '' && steps.app-token.outputs.token != '' }}
         continue-on-error: true
-        uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
+        uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
         with:
           project-url: https://github.com/orgs/bounded-systems/projects/2
           github-token: ${{ steps.app-token.outputs.token }}
