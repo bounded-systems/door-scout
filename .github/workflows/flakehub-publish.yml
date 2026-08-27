@@ -18,4 +18,4 @@ concurrency:
 
 jobs:
   publish:
-    uses: bounded-systems/.github/.github/workflows/repo-flake-publish.yml@cbaa7b7bcb4dc3c0d9ca90286d720173cdb19d5e
+    uses: bounded-systems/.github/.github/workflows/repo-flake-publish.yml@99e88a0335519cb78be8a1b6623105613fa6aca1
