@@ -59,7 +59,7 @@ jobs:
         id: app-token
         if: ${{ vars.CF_BROKER_URL != '' }}
         continue-on-error: true
-        uses: bounded-systems/.github/.github/actions/broker-gh-token@99e88a0335519cb78be8a1b6623105613fa6aca1 # broker-gh-token (prx-26bq), .github#109
+        uses: bounded-systems/.github/.github/actions/broker-gh-token@c95ed4e5715faf591d63ed44c926ea71fa2e1033 # broker-gh-token (prx-26bq), .github#109
         with:
           app: front-desk
           broker-url: ${{ vars.CF_BROKER_URL }}
