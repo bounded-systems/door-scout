@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   standard:
-    uses: bounded-systems/.github/.github/workflows/repo-standard.yml@99e88a0335519cb78be8a1b6623105613fa6aca1
+    uses: bounded-systems/.github/.github/workflows/repo-standard.yml@1716efd3a3cc81ba97e0ff2be0f9a0a0ebd6574c
     with:
       security: true
       test: true
