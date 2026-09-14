@@ -1,0 +1,118 @@
+# TEMPLATE — the fleet merge gate (#243). One always-run job, stable name, zero
+# per-repo wiring beyond this file.
+#
+# THIS FILE IS THE CANONICAL SOURCE. It rolls into each adopting repo as
+# `.github/workflows/gate.yml` (the front-desk-add.yml rollout shape: canonical
+# copy here, per-repo copies audited against it). A repo enters the
+# `ci-green-fleet` ruleset's include list ONLY after its copy is merged and has
+# been observed reporting `gate` on a real PR — that sequencing, not anything in
+# this file, is what keeps the required context from ever being one that cannot
+# report (docs/merge-gate.md, "The fleet gate").
+#
+# WHAT GREEN MEANS: every other check that reported on this head, concluded
+# successfully, and none was still pending after a quiet period. This is the
+# shape-2 aggregating gate (#207) generalized: pr.yml aggregates via `needs:`
+# over checks it names; this polls the head's check runs and commit statuses, so
+# the same context works in any repo without knowing its CI. A repo that later
+# wants the sharper needs-based form (skips asserted per check) replaces this
+# file with a pr.yml-shaped gate reporting the same context — the ruleset does
+# not change.
+#
+# VACUOUS PASS IS DOCUMENTED, NOT HIDDEN: in a repo where nothing else runs on
+# PRs, `gate` goes green after the grace period. That equals the repo's current
+# merge bar (nothing), so requiring `gate` there loses nothing and buys the
+# blocker auto-merge needs to arm (#243). The gate reports the same name whether
+# it aggregated five checks or zero — merge-gate.md records why that is the
+# property worth requiring and a bare sentinel is not.
+#
+# FAILS CLOSED. A check stuck in_progress, or one that concludes
+# failure/cancelled/timed_out/action_required/stale, makes `gate` red. If a repo
+# wedges on a check that will never conclude, the escape is a reviewed
+# membership PR (drop the repo from ci-green-fleet's include list) through the
+# normal pipeline — not an org-owner ruleset edit. Blast radius: that one repo.
+#
+# NO ACTIONS. Nothing to SHA-pin, no third-party code in the merge path: plain
+# `gh api` reads under the workflow's own read-only grants.
+#
+# SELF-EXCLUSION IS BY NAME: check runs named `gate` are ignored, so the gate
+# does not wait on itself (or on its own re-runs). Do not name another job
+# `gate` in an adopting repo — it would be invisible to the gate.
+name: gate
+
+on:
+  pull_request:
+
+permissions:
+  checks: read
+  statuses: read
+
+concurrency:
+  group: gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # Backstop only; the loop below owns the deadline and names the checks it
+    # was still waiting on when it fails.
+    timeout-minutes: 50
+    steps:
+      - name: Every other check on this head is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          # Seconds of quiet (all checks concluded, none new) before green: a
+          # check that queues late resets the clock, so a fast repo is not
+          # merged out from under a slow-to-start workflow.
+          GRACE: "90"
+          INTERVAL: "20"
+          DEADLINE_MINUTES: "45"
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + DEADLINE_MINUTES * 60 ))
+          settled_at=""
+
+          while :; do
+            now=$(date +%s)
+
+            # Check runs on the head, latest attempt per check, minus this job.
+            runs="$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name != "gate") | {name, status, conclusion}]' \
+              | jq -s 'add // []')"
+
+            # Legacy commit statuses (state is "pending" when there are none,
+            # so gate on the count before trusting the state).
+            status="$(gh api "repos/$REPO/commits/$SHA/status" \
+              --jq '{state, total_count}')"
+
+            failed="$(jq -r '[.[] | select(.status == "completed"
+              and (.conclusion as $c | ["success","neutral","skipped"] | index($c) | not))
+              | .name] | join(", ")' <<<"$runs")"
+            if [ -n "$failed" ] || [ "$(jq -r '.state' <<<"$status")" = "failure" ] \
+              || [ "$(jq -r '.state' <<<"$status")" = "error" ]; then
+              echo "::error title=gate::red checks on $SHA: ${failed:-commit status}"
+              exit 1
+            fi
+
+            pending="$(jq -r '[.[] | select(.status != "completed") | .name] | join(", ")' <<<"$runs")"
+            [ "$(jq -r '.total_count' <<<"$status")" -gt 0 ] \
+              && [ "$(jq -r '.state' <<<"$status")" = "pending" ] \
+              && pending="${pending:+$pending, }commit status"
+
+            if [ -n "$pending" ]; then
+              settled_at=""
+              if [ "$now" -ge "$deadline" ]; then
+                echo "::error title=gate::deadline (${DEADLINE_MINUTES}m) with checks still pending: $pending"
+                exit 1
+              fi
+            else
+              [ -n "$settled_at" ] || settled_at="$now"
+              if [ $(( now - settled_at )) -ge "$GRACE" ]; then
+                echo "gate: $(jq 'length' <<<"$runs") check(s) green, quiet for ${GRACE}s"
+                exit 0
+              fi
+            fi
+
+            sleep "$INTERVAL"
+          done
