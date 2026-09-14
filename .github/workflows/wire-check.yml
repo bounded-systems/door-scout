@@ -14,6 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
-      - uses: DeterminateSystems/flakehub-cache-action@83293488abfd33fbfb2ab084097467491c029962 # v3.22.2
+      - uses: DeterminateSystems/flakehub-cache-action@e80fccc9c4e3a885ad51721c8b92ba3f839d2f6f # v3.22.3
       - name: scoutd METHODS conform to scout-wire
         run: nix build --print-build-logs '.#checks.x86_64-linux.scout-wire-methods'
