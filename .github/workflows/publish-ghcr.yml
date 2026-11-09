@@ -44,7 +44,7 @@ jobs:
 
       # Shared nix binary cache: cache hits skip the image rebuild; only changed
       # derivations build (then get pushed). OIDC auth - no secret.
-      - uses: DeterminateSystems/flakehub-cache-action@83293488abfd33fbfb2ab084097467491c029962 # v3.22.2
+      - uses: DeterminateSystems/flakehub-cache-action@f00fba8dc0949d63cbbb7d33da7912417d588d75 # v3.24.2
 
       - name: Use a v2 containers registries.conf
         run: |
